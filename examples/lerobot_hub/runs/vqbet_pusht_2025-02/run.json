@@ -1,0 +1,14 @@
+{
+ "format_version": "0.1",
+ "run_id": "vqbet_pusht_2025-02",
+ "policy": "lerobot/vqbet_pusht@43c6c4de",
+ "benchmark": "pusht",
+ "settings": {
+  "start_seed": 100000
+ },
+ "sources": [
+  "/home/saksham/experiments/policy-diff/examples/lerobot_hub/eval_info/vqbet_pusht_2025-02.json"
+ ],
+ "notes": "eval_info.json from huggingface.co/lerobot/vqbet_pusht at 43c6c4deda2cb3cfba79c866b6bcdb66970b5c9f",
+ "created": "2026-10-18"
+}

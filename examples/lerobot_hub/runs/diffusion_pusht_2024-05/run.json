@@ -1,0 +1,14 @@
+{
+ "format_version": "0.1",
+ "run_id": "diffusion_pusht_2024-05",
+ "policy": "lerobot/diffusion_pusht@37628ec9",
+ "benchmark": "pusht",
+ "settings": {
+  "start_seed": 100000
+ },
+ "sources": [
+  "/home/saksham/experiments/policy-diff/examples/lerobot_hub/eval_info/diffusion_pusht_2024-05.json"
+ ],
+ "notes": "eval_info.json from huggingface.co/lerobot/diffusion_pusht at 37628ec997e131b87e648f6fde44fe73de3fde30",
+ "created": "2026-10-18"
+}

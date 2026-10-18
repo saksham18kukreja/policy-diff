@@ -1,0 +1,14 @@
+{
+ "format_version": "0.1",
+ "run_id": "act_insertion_2025-01",
+ "policy": "lerobot/act_aloha_sim_insertion_human@04be2f0a",
+ "benchmark": "aloha_insertion",
+ "settings": {
+  "start_seed": 1000
+ },
+ "sources": [
+  "/home/saksham/experiments/policy-diff/examples/lerobot_hub/eval_info/act_insertion_2025-01.json"
+ ],
+ "notes": "eval_info.json from huggingface.co/lerobot/act_aloha_sim_insertion_human at 04be2f0a2f889f89c7e8df5587a63f6b4e1711be",
+ "created": "2026-10-18"
+}

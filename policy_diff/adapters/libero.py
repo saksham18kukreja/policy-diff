@@ -32,7 +32,7 @@ import os
 from pathlib import Path
 from typing import Optional, Sequence
 
-from ..schema import Episode, FormatError, Run, Stage
+from ..schema import Episode, FormatError, Stage
 
 
 def _jsonl(path) -> list[dict]:
@@ -130,12 +130,3 @@ def _episode(r, sg_file, ev, hz, base, suite, step, plan, video_base) -> Episode
                               f"subgoal log ({h.get('success')}/{h.get('steps')} vs {r['success']}/{r['steps']})")
     return Episode(task=task, success=success, init=r["init_state"], seed=seed, length=r["steps"],
                    stages=stages, events=events, video=video, extra=extra)
-
-
-def import_run(run_id: str, subgoals, evals=None, harness=None, **kwargs) -> Run:
-    """A Run from one or more LIBERO evaluations (see import_libero)."""
-    run_kw = {k: kwargs.pop(k) for k in ("policy", "settings", "notes", "created") if k in kwargs}
-    episodes = import_libero(subgoals, evals, harness, **kwargs)
-    sources = [str(p) for p in [*subgoals, *(evals or []), *(harness or [])]]
-    return Run(run_id=run_id, episodes=episodes, benchmark=kwargs.get("suite", "libero_10"),
-               sources=sources, **run_kw)

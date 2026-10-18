@@ -1,0 +1,16 @@
+{
+ "format_version": "0.1",
+ "run_id": "cube_v4.1",
+ "policy": "bc pick v4.1",
+ "benchmark": "cube_lift",
+ "settings": {},
+ "sources": [
+  "v4.1__bc_clean3000_both_bce_time_s0__skill-pick__color__after_place.tsv",
+  "v4.1__bc_clean3000_both_bce_time_s0__skill-pick__color.tsv",
+  "v4.1__bc_clean3000_both_bce_time_s1__skill-pick__color__after_place.tsv",
+  "v4.1__bc_clean3000_both_bce_time_s1__skill-pick__color.tsv",
+  "v4.1__bc_clean3000_both_bce_time_s2__skill-pick__color.tsv"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

@@ -1,8 +1,9 @@
 """policy-diff command line.
 
-  policy-diff import libero --subgoals s1000.jsonl --eval eval_info.json --out runs/base
+  policy-diff import table episodes.csv --task task --success success --init init --out runs/base
+  policy-diff import lerobot eval_info.json --start-seed 1000 --out runs/base
   policy-diff summary runs/base
-  policy-diff compare runs/base runs/candidate [--json diff.json]
+  policy-diff compare runs/base runs/candidate [--where robot=r2] [--json diff.json]
 """
 
 from __future__ import annotations
@@ -11,11 +12,14 @@ import argparse
 import json
 import sys
 from datetime import date
+from pathlib import Path
 
 from . import stats
-from .adapters.libero import import_run
+from .adapters.lerobot import import_lerobot
+from .adapters.libero import import_libero
+from .adapters.table import import_table
 from .compare import Comparison, compare
-from .schema import FormatError, load_run, save_run
+from .schema import EPISODES_FILE, FormatError, Run, load_run, save_run
 
 
 def _pct(k: int, n: int) -> str:
@@ -34,72 +38,123 @@ def _settings(pairs):
     return out
 
 
-def cmd_import_libero(args) -> int:
-    run = import_run(args.run_id or args.out.rstrip("/").split("/")[-1], args.subgoals, args.eval,
-                     args.harness, suite=args.suite, step=args.step, video_base=args.video_base,
-                     plan=json.loads(open(args.plan).read()) if args.plan else None,
-                     policy=args.policy, settings=_settings(args.setting), notes=args.notes,
-                     created=args.created or date.today().isoformat())
-    if args.append:
-        try:
-            old = load_run(args.out)
-        except FileNotFoundError:
-            old = None
-        if old is not None:
-            old.episodes += run.episodes
-            old.sources += run.sources
-            old.settings.update(run.settings)
-            run = old
+def _write(args, episodes, sources) -> int:
+    """Save imported episodes as a run (or add them to one with --append)."""
+    run = Run(args.run_id or Path(args.out).name, episodes, policy=args.policy, benchmark=args.benchmark,
+              settings=_settings(args.setting), sources=[str(p) for p in sources], notes=args.notes,
+              created=args.created or date.today().isoformat())
+    if args.append and (Path(args.out) / EPISODES_FILE).exists():
+        old = load_run(args.out)
+        old.episodes += run.episodes
+        old.sources += run.sources
+        old.settings.update(run.settings)
+        run = old
     save_run(run, args.out)
     print(f"{args.out}: {len(run.episodes)} episodes, {len(run.tasks())} tasks, "
           f"{sum(e.success for e in run.episodes)} successes")
     return 0
 
 
+def cmd_import_table(args) -> int:
+    stages = {}
+    for item in args.stage or []:
+        name, _, col = item.partition("=")
+        stages[name] = col or name
+    eps = import_table(args.files, task=args.task, task_value=args.task_value, success=args.success,
+                       init=args.init, seed=args.seed, length=args.length, video=args.video,
+                       failure=args.failure, stages=stages, stage_values=args.stage_values,
+                       furthest=args.furthest, order=args.order.split(",") if args.order else None,
+                       const=_settings(args.const))
+    return _write(args, eps, args.files)
+
+
+def cmd_import_lerobot(args) -> int:
+    eps = import_lerobot(args.files, task=args.task, start_seed=args.start_seed, index_as_init=args.index_as_init,
+                         video_base=args.video_base)
+    return _write(args, eps, args.files)
+
+
+def cmd_import_libero(args) -> int:
+    if args.benchmark is None:
+        args.benchmark = args.suite
+    eps = import_libero(args.subgoals, args.eval, args.harness, suite=args.suite, step=args.step,
+                        plan=json.loads(Path(args.plan).read_text()) if args.plan else None,
+                        video_base=args.video_base)
+    return _write(args, eps, [*args.subgoals, *(args.eval or []), *(args.harness or [])])
+
+
+def _where(items) -> dict:
+    out = {}
+    for item in items or []:
+        k, sep, v = item.partition("=")
+        if not sep:
+            raise ValueError(f"--where takes KEY=VALUE, got {item!r}")
+        out[k] = v
+    return out
+
+
 def cmd_summary(args) -> int:
-    run = load_run(args.run)
+    run = load_run(args.run).where(**_where(args.where))
     print(f"{run.run_id}  policy={run.policy}  benchmark={run.benchmark}")
     if run.settings:
         print("settings: " + ", ".join(f"{k}={v}" for k, v in run.settings.items()))
+    w = max([len(t) for t in run.tasks()] + [3])
     for task, eps in run.by_task().items():
-        print(f"  {task:<22} {_pct(sum(e.success for e in eps), len(eps))}")
-    n = len(run.episodes)
-    print(f"  {'all':<22} {_pct(sum(e.success for e in run.episodes), n)}")
+        print(f"  {task:<{w}}  {_pct(sum(e.success for e in eps), len(eps))}")
+    print(f"  {'all':<{w}}  {_pct(sum(e.success for e in run.episodes), len(run.episodes))}")
     return 0
 
 
 def format_comparison(c: Comparison) -> str:
+    w = max([len(d.task) for d in c.tasks] + [7])
     lines = [f"A = {c.a}", f"B = {c.b}", "",
-             f"{'task':<22} {'A':<23} {'B':<23} {'change':>7}  {'pairs':>5} {'A✓B✗':>5} {'B✓A✗':>5}"
+             f"{'task':<{w}}  {'A':<23} {'B':<23} {'change':>7}  {'pairs':>5} {'A✓B✗':>5} {'B✓A✗':>5} {'unpaired':>8}"
              f" {'p':>6} {'q':>6}  verdict"]
 
     def row(d):
-        verdict = "noise" if d.direction == "unchanged" else f"{d.label}: {d.direction}"
-        test = "" if d.test == "exact, by initial state" else " (unpaired)"
-        return (f"{d.task:<22} {_pct(d.a_success, d.a_n):<23} {_pct(d.b_success, d.b_n):<23} "
+        if d.direction != "unchanged":
+            verdict = f"{d.label}: {d.direction}"
+        else:
+            verdict = "no change" if d.a_success * d.b_n == d.b_success * d.a_n else "noise"
+        test = {"exact, by seed": " (paired by seed)", "exact, unpaired": " (unpaired)"}.get(d.test, "")
+        return (f"{d.task:<{w}}  {_pct(d.a_success, d.a_n):<23} {_pct(d.b_success, d.b_n):<23} "
                 f"{100 * d.delta:+6.0f}%  {d.pairs:>5} {d.a_only_wins:>5} {d.b_only_wins:>5} "
+                f"{_unpaired(d):>8} "
                 f"{d.p:6.3f} {d.q:6.3f}  {verdict}{test}")
 
     order = {"regressed": 0, "improved": 1, "unchanged": 2}
     for d in sorted(c.tasks, key=lambda d: (order[d.direction], d.p)):
         lines.append(row(d))
     if c.overall:
-        lines += ["-" * 120, row(c.overall)]
+        lines += ["-" * (w + 110), row(c.overall)]
     counts = {k: sum(d.direction == k for d in c.tasks) for k in order}
     lines += ["", f"{len(c.tasks)} tasks compared: {counts['regressed']} regressed, {counts['improved']} improved, "
               f"{counts['unchanged']} no detectable change"]
+    for w in c.warnings:
+        lines.append(f"WARNING: {w}")
     if c.only_in_a:
         lines.append(f"only in A (not compared): {', '.join(c.only_in_a)}")
     if c.only_in_b:
         lines.append(f"only in B (not compared): {', '.join(c.only_in_b)}")
     lines.append(f"likely real: FDR-adjusted q <= {stats.LIKELY_Q}; possible: p <= {stats.POSSIBLE_P} "
                  "before correction. Tests are exact and stratified by initial state;\n"
-                 "pairs = episodes matched on task and initial state, A✓B✗ / B✓A✗ = pairs that flipped.")
+                 "pairs = episodes matched on task and initial state, A✓B✗ / B✓A✗ = pairs that flipped;\n"
+                 "unpaired = A/B episodes with no counterpart (counted by the test, not in the flips).")
     return "\n".join(lines)
 
 
+def _unpaired(d) -> str:
+    if not (d.a_unpaired or d.b_unpaired):
+        return "-"
+    return f"{d.a_unpaired}/{d.b_unpaired}"
+
+
 def cmd_compare(args) -> int:
-    a, b = load_run(args.a), load_run(args.b)
+    a = load_run(args.a).where(**_where((args.where or []) + (args.where_a or [])))
+    b = load_run(args.b).where(**_where((args.where or []) + (args.where_b or [])))
+    for r in (a, b):
+        if not r.episodes:
+            raise ValueError(f"{r.run_id}: no episodes (check --where)")
     c = compare(a, b)
     print(format_comparison(c))
     if args.json:
@@ -114,30 +169,70 @@ def build_parser() -> argparse.ArgumentParser:
 
     imp = sub.add_parser("import", help="convert logs into the policy-diff format")
     imp_sub = imp.add_subparsers(dest="source", required=True)
-    lib = imp_sub.add_parser("libero", help="LIBERO goal-condition logs (+ lerobot-eval, Conductor harness)")
+
+    def importer(name, help, func):
+        q = imp_sub.add_parser(name, help=help)
+        q.set_defaults(func=func)
+        return q
+
+    def run_options(q):
+        g = q.add_argument_group("run")
+        g.add_argument("--out", required=True, help="run directory to write")
+        g.add_argument("--run-id", help="default: the --out directory name")
+        g.add_argument("--policy", help="policy / checkpoint name")
+        g.add_argument("--benchmark")
+        g.add_argument("--setting", action="append", metavar="KEY=VALUE", help="run setting, repeatable")
+        g.add_argument("--notes")
+        g.add_argument("--created", help="date (default: today)")
+        g.add_argument("--append", action="store_true", help="add episodes to an existing run")
+
+    t = importer("table", "any CSV / TSV / JSONL with one row per episode", cmd_import_table)
+    t.add_argument("files", nargs="+")
+    t.add_argument("--task", help="task column (default: 'task')")
+    t.add_argument("--task-value", help="the task for every row, for files without a task column")
+    t.add_argument("--success", default="success", help="success column (1/0, true/false, ...)")
+    for col in ("init", "seed", "length", "video", "failure"):
+        t.add_argument(f"--{col}", help=f"{col} column (default: a column named '{col}', if any)")
+    t.add_argument("--stage", action="append", metavar="NAME[=COLUMN]", help="a stage column, repeatable")
+    t.add_argument("--stage-values", choices=["bool", "step"], default="bool",
+                   help="stage columns hold reached yes/no (bool) or the first step it held (step)")
+    t.add_argument("--furthest", help="column naming the furthest stage reached")
+    t.add_argument("--order", help="comma-separated stage order for --furthest")
+    t.add_argument("--const", action="append", metavar="KEY=VALUE",
+                   help="add to every episode's extra (e.g. checkpoint=s0), repeatable")
+    run_options(t)
+
+    lr = importer("lerobot", "lerobot-eval eval_info.json, any LeRobot environment", cmd_import_lerobot)
+    lr.add_argument("files", nargs="+")
+    lr.add_argument("--task", help="task name (older eval_info.json files have none) or task group")
+    lr.add_argument("--start-seed", type=int, help="lerobot-eval --seed; pairs runs evaluated with the same seed")
+    lr.add_argument("--index-as-init", action="store_true",
+                    help="treat the episode index as the initial-state id (only if resets depend on it alone)")
+    lr.add_argument("--video-base", help="store video paths relative to this directory")
+    run_options(lr)
+
+    lib = importer("libero", "LIBERO goal-condition logs (+ lerobot-eval, Conductor harness)", cmd_import_libero)
     lib.add_argument("--subgoals", nargs="+", required=True, help="eval_with_subgoals.py logs, one per evaluation")
     lib.add_argument("--eval", nargs="+", help="lerobot-eval eval_info.json files, aligned with --subgoals")
     lib.add_argument("--harness", nargs="+", help="Conductor harness logs, aligned with --subgoals")
-    lib.add_argument("--out", required=True, help="run directory to write")
-    lib.add_argument("--run-id")
-    lib.add_argument("--policy")
     lib.add_argument("--suite", default="libero_10")
     lib.add_argument("--plan", help="JSON plan: {task_id: [{instruction, check}, ...]}; orders stages by step")
     lib.add_argument("--step", type=int, help="success = the predicate of plan step N reached (needs --plan)")
     lib.add_argument("--video-base", help="store video paths relative to this directory")
-    lib.add_argument("--setting", action="append", metavar="KEY=VALUE", help="run setting, repeatable")
-    lib.add_argument("--notes")
-    lib.add_argument("--created", help="date (default: today)")
-    lib.add_argument("--append", action="store_true", help="add episodes to an existing run")
-    lib.set_defaults(func=cmd_import_libero)
+    run_options(lib)
 
     s = sub.add_parser("summary", help="per-task success of one run")
     s.add_argument("run")
+    s.add_argument("--where", action="append", metavar="KEY=VALUE", help="only matching episodes (field or extra)")
     s.set_defaults(func=cmd_summary)
 
     c = sub.add_parser("compare", help="what changed from run A to run B")
     c.add_argument("a")
     c.add_argument("b")
+    c.add_argument("--where", action="append", metavar="KEY=VALUE",
+                   help="compare only matching episodes (a field such as task, or an extra key), repeatable")
+    c.add_argument("--where-a", action="append", metavar="KEY=VALUE", help="filter run A only")
+    c.add_argument("--where-b", action="append", metavar="KEY=VALUE", help="filter run B only")
     c.add_argument("--json", help="also write the comparison as JSON")
     c.set_defaults(func=cmd_compare)
     return p

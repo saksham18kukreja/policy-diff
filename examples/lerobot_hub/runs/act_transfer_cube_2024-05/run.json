@@ -1,0 +1,14 @@
+{
+ "format_version": "0.1",
+ "run_id": "act_transfer_cube_2024-05",
+ "policy": "lerobot/act_aloha_sim_transfer_cube_human@3c3b58da",
+ "benchmark": "aloha_transfer_cube",
+ "settings": {
+  "start_seed": 1000
+ },
+ "sources": [
+  "/home/saksham/experiments/policy-diff/examples/lerobot_hub/eval_info/act_transfer_cube_2024-05.json"
+ ],
+ "notes": "eval_info.json from huggingface.co/lerobot/act_aloha_sim_transfer_cube_human at 3c3b58dac3f2c26a5c0d8d7e149df632efe69972",
+ "created": "2026-10-18"
+}

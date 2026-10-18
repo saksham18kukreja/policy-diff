@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
@@ -56,8 +57,10 @@ class TaskDiff:
     pairs: int  # matched episodes
     a_only_wins: int  # pairs where A succeeded and B failed
     b_only_wins: int  # pairs where B succeeded and A failed
-    test: str  # exact test stratified by initial state, or unpaired without inits
+    test: str  # exact test stratified by initial state (or seed), or unpaired
     p: float
+    a_unpaired: int = 0  # episodes with no counterpart in the other run (still used by the test)
+    b_unpaired: int = 0
     q: float = 1.0  # FDR-adjusted across the compared tasks
     label: str = stats.NOISE
 
@@ -94,33 +97,75 @@ class Comparison:
     overall: Optional[TaskDiff]
     only_in_a: list[str] = field(default_factory=list)
     only_in_b: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {"a": self.a, "b": self.b, "tasks": [t.to_dict() for t in self.tasks],
                 "overall": self.overall.to_dict() if self.overall else None,
-                "only_in_a": self.only_in_a, "only_in_b": self.only_in_b}
+                "only_in_a": self.only_in_a, "only_in_b": self.only_in_b, "warnings": self.warnings}
 
 
-def _strata(a: list[Episode], b: list[Episode]) -> list[tuple[int, int, int, int]]:
-    """(a_success, a_n, b_success, b_n) per (task, initial state); no init: one stratum per task."""
+def _strata(a: list[Episode], b: list[Episode]) -> tuple[list[tuple[int, int, int, int]], int]:
+    """(a_success, a_n, b_success, b_n) per (task, initial state), and how many strata are matched.
+
+    Without an init id, episodes with the same seed form a stratum (a seeded
+    reset gives the same start). Episodes whose stratum has no counterpart in
+    the other run are pooled into one unmatched stratum per task, so they still
+    count (as an unpaired comparison) instead of being dropped. Strata depend
+    only on ids, never on outcomes, so the conditional test stays exact.
+    """
+    def key(e):
+        if e.init is not None:
+            return (e.task, "init", e.init)
+        if e.seed is not None:
+            return (e.task, "seed", e.seed)
+        return (e.task, "none", None)
+
+    keys_a, keys_b = {key(e) for e in a}, {key(e) for e in b}
+    matched = (keys_a & keys_b) - {k for k in keys_a | keys_b if k[1] == "none"}
     g: dict[tuple, list[int]] = {}
     for side, eps in ((0, a), (1, b)):
         for e in eps:
-            c = g.setdefault((e.task, e.init), [0, 0, 0, 0])
+            k = key(e)
+            c = g.setdefault(k if k in matched else (e.task, "unmatched"), [0, 0, 0, 0])
             c[2 * side] += e.success
             c[2 * side + 1] += 1
-    return [tuple(c) for c in g.values()]
+    return [tuple(c) for c in g.values()], len(matched)
 
 
 def _diff(task: str, a: list[Episode], b: list[Episode]) -> TaskDiff:
-    pairs, _, _ = pair_episodes(a, b)
+    pairs, a_left, b_left = pair_episodes(a, b)
     a_wins = sum(x.success and not y.success for x, y in pairs)
     b_wins = sum(y.success and not x.success for x, y in pairs)
     ka, kb = sum(e.success for e in a), sum(e.success for e in b)
-    stratified = any(e.init is not None for e in a + b)
-    test = "exact, by initial state" if stratified else "exact, unpaired"
+    strata, matched = _strata(a, b)
+    if not matched:
+        test = "exact, unpaired"
+    elif any(e.init is not None for e in a + b):
+        test = "exact, by initial state"
+    else:
+        test = "exact, by seed"
     return TaskDiff(task, ka, len(a), kb, len(b), len(pairs), a_wins, b_wins, test,
-                    stats.stratified_exact(_strata(a, b)))
+                    stats.stratified_exact(strata), len(a_left), len(b_left))
+
+
+def _fingerprint(e: Episode) -> tuple:
+    """An episode's outcome without its task name: identical fingerprints mean identical logs."""
+    stages = tuple((st.name, st.reached, st.first_true, st.final) for st in e.stages)
+    extra = tuple(sorted((k, json.dumps(v, sort_keys=True)) for k, v in e.extra.items()))
+    return (e.init, e.seed, e.success, e.length, stages, extra)
+
+
+def integrity_warnings(a: Run, b: Run) -> list[str]:
+    """Signs that two runs are not two independent evaluations."""
+    out = []
+    if a.episodes and sorted(map(_fingerprint, a.episodes), key=repr) == sorted(map(_fingerprint, b.episodes), key=repr):
+        out.append(f"{a.run_id} and {b.run_id} have identical per-episode results ({len(a.episodes)} episodes"
+                   f"{', ignoring task names' if a.tasks() != b.tasks() else ''}): the same evaluation logged twice?")
+    shared = {e.video for e in a.episodes if e.video} & {e.video for e in b.episodes if e.video}
+    if shared:
+        out.append(f"{len(shared)} video paths appear in both runs, e.g. {sorted(shared)[0]}")
+    return out
 
 
 def compare(a: Run, b: Run) -> Comparison:
@@ -137,5 +182,5 @@ def compare(a: Run, b: Run) -> Comparison:
         overall = _diff("overall", ea, eb)
         overall.q = overall.p  # a single test
         overall.label = stats.label(overall.p, overall.q)
-    return Comparison(a.run_id, b.run_id, diffs, overall,
-                      only_in_a=[t for t in ta if t not in tb], only_in_b=[t for t in tb if t not in ta])
+    return Comparison(a.run_id, b.run_id, diffs, overall, only_in_a=[t for t in ta if t not in tb],
+                      only_in_b=[t for t in tb if t not in ta], warnings=integrity_warnings(a, b))

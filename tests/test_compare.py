@@ -60,3 +60,42 @@ def test_launch_demo_cases():
     # the mug-in-microwave step went 5 -> 2 -> 5 of 10 across checkpoints: noise
     assert diff("finetune_v1_10k_steps", "finetune_v1_30k_steps", "libero_10/9:step0").label == stats.NOISE
     assert diff("finetune_v1_30k_steps", "finetune_v1_50k_steps", "libero_10/9:step0").label == stats.NOISE
+
+
+CUBE = Path(__file__).parent.parent / "examples" / "cube_lift" / "runs"
+
+
+@pytest.mark.skipif(not CUBE.exists(), reason="example runs not converted")
+def test_cube_lift_cases():
+    """A non-LIBERO benchmark, imported with the generic table importer."""
+    v50, v51 = load_run(CUBE / "cube_v5.0"), load_run(CUBE / "cube_v5.1")
+    d = next(d for d in compare(v50, v51).tasks if d.task == "pick/color")
+    # the contact trigger removed the pick skill's timeouts: 497/600 -> 570/600, no episode got worse
+    assert (d.a_success, d.b_success, d.a_only_wins, d.label) == (497, 570, 0, stats.LIKELY)
+    assert {e.failure for e in v50.episodes if e.task == "pick/color" and not e.success} >= {"timeout"}
+    # one v5.1 training seed drops the cube after a place; the others don't
+    c = compare(v51.where(checkpoint="s1"), v51.where(checkpoint="s2"))
+    regressed = [d.task for d in c.tasks if d.direction == "regressed"]
+    assert regressed == ["pick/color_after_place"]
+
+
+HUB = Path(__file__).parent.parent / "examples" / "lerobot_hub" / "runs"
+
+
+@pytest.mark.skipif(not HUB.exists(), reason="example runs not fetched")
+def test_lerobot_hub_cases():
+    """LeRobot's published eval_info.json files, imported with the generic LeRobot adapter."""
+    def one(a, b):
+        c = compare(load_run(HUB / a), load_run(HUB / b))
+        return c, (c.tasks[0] if c.tasks else None)
+
+    _, d = one("vqbet_pusht_2024-07", "vqbet_pusht_2025-02")
+    assert (d.test, d.pairs, d.label, d.direction) == ("exact, by seed", 500, stats.LIKELY, "regressed")
+    _, d = one("act_transfer_cube_2024-05", "act_transfer_cube_2025-02")
+    assert (d.label, d.direction) == (stats.LIKELY, "regressed")
+    _, d = one("diffusion_pusht_2024-05", "diffusion_pusht_2025-02")
+    assert (d.test, d.label) == ("exact, unpaired", stats.NOISE)  # disjoint seeds
+    c, _ = one("act_transfer_cube_2025-02", "act_insertion_2025-01")
+    assert not c.tasks and "identical per-episode results" in c.warnings[0]
+    c, _ = one("diffusion_pusht_2024-05", "vqbet_pusht_2024-07")  # same seeds and score, different runs
+    assert not c.warnings

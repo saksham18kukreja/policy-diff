@@ -13,4 +13,4 @@ jobs:
           python-version: ${{ matrix.python }}
       - run: pip install pytest
       - run: python -m pytest -q
-      - run: python -m policy_diff compare examples/libero_long/runs/smolvla_libero examples/libero_long/runs/finetune_v1_50k
+      - run: python -m policy_diff compare examples/lerobot_hub/runs/vqbet_pusht_2024-07 examples/lerobot_hub/runs/vqbet_pusht_2025-02

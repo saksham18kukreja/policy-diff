@@ -7,14 +7,18 @@ A run is a directory with two files:
 
 Only `task` and `success` are required per episode. Everything else is
 optional, so a team can start with what it already logs and add stage
-signals, harness events and videos later.
+signals, harness events and videos later. Nothing is benchmark-specific:
+a task is any string, an initial state any id, a stage any named condition
+(a simulator predicate, a success detector, an operator's label).
 
-  {"task": "libero_10/2", "init": 7, "seed": 1007, "success": false, "length": 520,
-   "stages": [{"name": "turnon flat_stove_1", "first_true": 82, "final": true}],
-   "events": [[82, "step 0 done"]],
-   "video": "videos/libero_10_2/eval_episode_7.mp4"}
+  {"task": "pick_mug", "init": 7, "seed": 1007, "success": false, "length": 520,
+   "stages": [{"name": "grasped", "first_true": 82, "final": false, "ever_lost": true},
+              {"name": "lifted", "reached": false}],
+   "events": [[82, "grasp detected"], [140, "dropped"]],
+   "failure": "dropped", "video": "videos/ep7.mp4"}
 
-Episodes with the same task and initial state are paired across runs.
+Episodes with the same task and initial state are paired across runs; without
+an initial-state id, episodes with the same task and seed are.
 """
 
 from __future__ import annotations
@@ -39,22 +43,24 @@ class Stage:
     first_true: Optional[int] = None  # first step the stage condition held
     final: Optional[bool] = None  # held at the end of the episode
     ever_lost: Optional[bool] = None  # held, then stopped holding
+    reached: Optional[bool] = None  # defaults to "first_true is set"; give it when there is no timing
 
-    @property
-    def reached(self) -> bool:
-        return self.first_true is not None
+    def __post_init__(self):
+        if self.reached is None:
+            self.reached = self.first_true is not None or bool(self.final)
 
     def to_dict(self) -> dict:
-        d = {"name": self.name, "first_true": self.first_true, "final": self.final}
-        if self.ever_lost is not None:
-            d["ever_lost"] = self.ever_lost
+        d = {"name": self.name, "reached": self.reached}
+        for k in ("first_true", "final", "ever_lost"):
+            if getattr(self, k) is not None:
+                d[k] = getattr(self, k)
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> "Stage":
         if not isinstance(d, dict) or not isinstance(d.get("name"), str):
             raise FormatError(f"stage needs a string 'name': {d!r}")
-        return cls(d["name"], d.get("first_true"), d.get("final"), d.get("ever_lost"))
+        return cls(d["name"], d.get("first_true"), d.get("final"), d.get("ever_lost"), d.get("reached"))
 
 
 @dataclass
@@ -67,6 +73,7 @@ class Episode:
     stages: list[Stage] = field(default_factory=list)
     events: list[tuple[int, str]] = field(default_factory=list)
     video: Optional[str] = None
+    failure: Optional[str] = None  # failure reason or label, as logged
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -81,6 +88,8 @@ class Episode:
             d["stages"] = [s.to_dict() for s in self.stages]
         if self.events:
             d["events"] = [[t, m] for t, m in self.events]
+        if self.failure is not None:
+            d["failure"] = self.failure
         if self.video is not None:
             d["video"] = self.video
         if self.extra:
@@ -98,7 +107,7 @@ class Episode:
         events = [(int(t), str(m)) for t, m in d.get("events") or []]
         return cls(task=d["task"], success=d["success"], init=d.get("init"), seed=d.get("seed"),
                    length=d.get("length"), stages=[Stage.from_dict(s) for s in d.get("stages") or []],
-                   events=events, video=d.get("video"), extra=d.get("extra") or {})
+                   events=events, video=d.get("video"), failure=d.get("failure"), extra=d.get("extra") or {})
 
 
 @dataclass
@@ -120,6 +129,18 @@ class Run:
         for e in self.episodes:
             out.setdefault(e.task, []).append(e)
         return {t: out[t] for t in sorted(out, key=_natural)}
+
+    def where(self, **conditions) -> "Run":
+        """A copy with only the episodes whose field or extra[key] equals each value (compared as strings)."""
+        def ok(e: Episode) -> bool:
+            for k, v in conditions.items():
+                have = getattr(e, k) if k in ("task", "init", "seed", "success", "failure") else e.extra.get(k)
+                if str(have).lower() != str(v).lower():
+                    return False
+            return True
+        label = ",".join(f"{k}={v}" for k, v in conditions.items())
+        return Run(f"{self.run_id}[{label}]" if label else self.run_id, [e for e in self.episodes if ok(e)],
+                   self.policy, self.benchmark, self.settings, self.sources, self.notes, self.created)
 
     def header(self) -> dict:
         return {"format_version": FORMAT_VERSION, "run_id": self.run_id, "policy": self.policy,
