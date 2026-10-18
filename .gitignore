@@ -6,3 +6,4 @@ __pycache__/
 *.html
 !docs/**/*.html
 examples/lerobot_hub/eval_info/
+wandb/

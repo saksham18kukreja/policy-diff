@@ -14,3 +14,15 @@ jobs:
       - run: pip install pytest
       - run: python -m pytest -q
       - run: python -m policy_diff compare examples/lerobot_hub/runs/vqbet_pusht_2024-07 examples/lerobot_hub/runs/vqbet_pusht_2025-02
+  test-wandb:
+    runs-on: ubuntu-latest
+    env:
+      WANDB_MODE: offline
+      WANDB_SILENT: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest wandb
+      - run: python -m pytest -q tests/test_wandb.py

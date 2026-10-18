@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import csv
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
@@ -77,54 +78,83 @@ def _stage(name, v, kind, where) -> Stage:
     return Stage(name, reached=_bool(v, where))
 
 
-def import_table(paths: Sequence[str], *, task: Optional[str] = None, task_value: Optional[str] = None,
-                 success: str = "success", init: Optional[str] = None, seed: Optional[str] = None,
-                 length: Optional[str] = None, video: Optional[str] = None, failure: Optional[str] = None,
-                 stages: Optional[dict[str, str]] = None, stage_values: str = "bool",
-                 furthest: Optional[str] = None, order: Optional[Sequence[str]] = None,
-                 const: Optional[dict] = None) -> list[Episode]:
-    if stage_values not in ("bool", "step"):
-        raise ValueError(f"stage_values is 'bool' or 'step', not {stage_values!r}")
-    if furthest and not order:
-        raise ValueError("furthest needs the stage order")
-    if task is None and task_value is None:
-        task = "task"
-    stages = dict(stages or {})
+@dataclass
+class Mapping:
+    """How a table's columns map onto episode fields (see the module docstring)."""
+    task: Optional[str] = None
+    task_value: Optional[str] = None
+    success: str = "success"
+    init: Optional[str] = None
+    seed: Optional[str] = None
+    length: Optional[str] = None
+    video: Optional[str] = None
+    failure: Optional[str] = None
+    stages: dict = field(default_factory=dict)
+    stage_values: str = "bool"
+    furthest: Optional[str] = None
+    order: Optional[Sequence[str]] = None
+    const: dict = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.stage_values not in ("bool", "step"):
+            raise ValueError(f"stage_values is 'bool' or 'step', not {self.stage_values!r}")
+        if self.furthest and not self.order:
+            raise ValueError("furthest needs the stage order")
+        if self.task is None and self.task_value is None:
+            self.task = "task"
+        self.stages = dict(self.stages or {})
+        self.const = dict(self.const or {})
+
+
+def episodes_from_rows(rows: Sequence[dict], m: Mapping, source: str = "table", first_row: int = 1,
+                       const: Optional[dict] = None) -> list[Episode]:
+    """Rows (dicts, one per episode) from any source, mapped onto episodes.
+
+    `source` and `first_row` only label error messages; `const` adds to m.const for these rows.
+    """
+    if not rows:
+        return []
+    cols = set(rows[0])
+    # optional fields default to same-named columns
+    fields = {k: (v if v is not None else (k if k in cols else None))
+              for k, v in dict(init=m.init, seed=m.seed, length=m.length, video=m.video, failure=m.failure).items()}
+    needed = [c for c in [m.task, m.success, m.furthest, *m.stages.values(), *fields.values()] if c]
+    missing = [c for c in needed if c not in cols]
+    if missing:
+        raise FormatError(f"{source}: no column(s) {missing}; columns are {sorted(cols)}")
+    used = set(needed)
+    tags = {**m.const, **(const or {})}
+    episodes = []
+    for n, r in enumerate(rows, first_row):
+        where = f"{source}:{n}"
+        ok = _bool(r[m.success], where)
+        st = [_stage(name, r[col], m.stage_values, where) for name, col in m.stages.items()]
+        if m.furthest:
+            v = r[m.furthest]
+            if _empty(v):
+                k = -1
+            elif v in m.order:
+                k = list(m.order).index(v)
+            else:
+                raise FormatError(f"{where}: furthest stage {v!r} is not one of {list(m.order)}")
+            st += [Stage(name, reached=i <= k) for i, name in enumerate(m.order)]
+        get = {k: (None if c is None or _empty(r[c]) else r[c]) for k, c in fields.items()}
+        episodes.append(Episode(
+            task=str(r[m.task]) if m.task else m.task_value, success=ok,
+            init=_number(get["init"]) if get["init"] is not None else None,
+            seed=_number(get["seed"]) if get["seed"] is not None else None,
+            length=_number(get["length"]) if get["length"] is not None else None,
+            stages=st, video=get["video"],
+            failure=None if ok or get["failure"] is None else str(get["failure"]),
+            extra={**tags, **{k: _number(v) for k, v in r.items() if k not in used and not _empty(v)}}))
+    return episodes
+
+
+def import_table(paths: Sequence[str], **mapping) -> list[Episode]:
+    """Episodes from CSV / TSV / JSONL files; keyword arguments are Mapping fields."""
+    m = Mapping(**mapping)
     episodes = []
     for path in paths:
-        rows = read_rows(path)
-        if not rows:
-            continue
-        cols = set(rows[0])
-        # optional fields default to same-named columns
-        fields = {k: (v if v is not None else (k if k in cols else None))
-                  for k, v in dict(init=init, seed=seed, length=length, video=video, failure=failure).items()}
-        needed = [c for c in [task, success, furthest, *stages.values(), *fields.values()] if c]
-        missing = [c for c in needed if c not in cols]
-        if missing:
-            raise FormatError(f"{path}: no column(s) {missing}; columns are {sorted(cols)}")
-        used = set(needed)
-        first_line = 1 if Path(path).suffix in JSON_SUFFIXES else 2  # CSV/TSV line 1 is the header
-        for n, r in enumerate(rows, first_line):
-            where = f"{path}:{n}"  # line number
-            ok = _bool(r[success], where)
-            st = [_stage(name, r[col], stage_values, where) for name, col in stages.items()]
-            if furthest:
-                v = r[furthest]
-                if _empty(v):
-                    k = -1
-                elif v in order:
-                    k = list(order).index(v)
-                else:
-                    raise FormatError(f"{where}: furthest stage {v!r} is not one of {list(order)}")
-                st += [Stage(name, reached=i <= k) for i, name in enumerate(order)]
-            get = {k: (None if c is None or _empty(r[c]) else r[c]) for k, c in fields.items()}
-            episodes.append(Episode(
-                task=str(r[task]) if task else task_value, success=ok,
-                init=_number(get["init"]) if get["init"] is not None else None,
-                seed=_number(get["seed"]) if get["seed"] is not None else None,
-                length=_number(get["length"]) if get["length"] is not None else None,
-                stages=st, video=get["video"],
-                failure=None if ok or get["failure"] is None else str(get["failure"]),
-                extra={**(const or {}), **{k: _number(v) for k, v in r.items() if k not in used and not _empty(v)}}))
+        first = 1 if Path(path).suffix in JSON_SUFFIXES else 2  # CSV/TSV line 1 is the header
+        episodes += episodes_from_rows(read_rows(path), m, str(path), first)
     return episodes

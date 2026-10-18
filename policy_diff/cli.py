@@ -2,6 +2,7 @@
 
   policy-diff import table episodes.csv --task task --success success --init init --out runs/base
   policy-diff import lerobot eval_info.json --start-seed 1000 --out runs/base
+  policy-diff import wandb --project team/evals --filter label=v5.1 --out runs/v5.1
   policy-diff summary runs/base
   policy-diff compare runs/base runs/candidate [--where robot=r2] [--json diff.json]
 """
@@ -55,17 +56,32 @@ def _write(args, episodes, sources) -> int:
     return 0
 
 
-def cmd_import_table(args) -> int:
+def _mapping(args) -> dict:
+    """Column-mapping options shared by `import table` and `import wandb`."""
     stages = {}
     for item in args.stage or []:
         name, _, col = item.partition("=")
         stages[name] = col or name
-    eps = import_table(args.files, task=args.task, task_value=args.task_value, success=args.success,
-                       init=args.init, seed=args.seed, length=args.length, video=args.video,
-                       failure=args.failure, stages=stages, stage_values=args.stage_values,
-                       furthest=args.furthest, order=args.order.split(",") if args.order else None,
-                       const=_settings(args.const))
-    return _write(args, eps, args.files)
+    return dict(task=args.task, task_value=args.task_value, success=args.success, init=args.init,
+                seed=args.seed, length=args.length, video=args.video, failure=args.failure, stages=stages,
+                stage_values=args.stage_values, furthest=args.furthest,
+                order=args.order.split(",") if args.order else None, const=_settings(args.const))
+
+
+def cmd_import_table(args) -> int:
+    return _write(args, import_table(args.files, **_mapping(args)), args.files)
+
+
+def cmd_import_wandb(args) -> int:
+    from .adapters.wandb_tables import import_wandb
+    split = lambda v: [k for k in (v or "").split(",") if k]
+    eps, ids, warnings = import_wandb(args.runs, project=args.project, filters=_where(args.filter),
+                                      table=args.table, task_from_config=split(args.task_from_config),
+                                      extra_from_config=split(args.extra_from_config), **_mapping(args))
+    print(f"read {len(ids)} W&B runs")
+    for w in warnings:
+        print(f"WARNING: {w}", file=sys.stderr)
+    return _write(args, eps, [f"wandb:{i}" for i in ids])
 
 
 def cmd_import_lerobot(args) -> int:
@@ -231,6 +247,13 @@ def cmd_compare(args) -> int:
     if args.json:
         with open(args.json, "w") as f:
             json.dump(out, f, indent=1)
+    if args.wandb:
+        from .export_wandb import log_comparison
+        bds = [stages.breakdown(d.task, a.by_task()[d.task], b.by_task()[d.task])
+               for d in c.tasks if d.direction != "unchanged"] if args.details != "none" else []
+        url = log_comparison(c, a, b, args.wandb, breakdowns=bds, reasons=reasons, mode=args.wandb_mode,
+                             video_base_a=args.video_base_a, video_base_b=args.video_base_b)
+        print(f"\nlogged to W&B: {url}")
     return 0
 
 
@@ -257,21 +280,34 @@ def build_parser() -> argparse.ArgumentParser:
         g.add_argument("--created", help="date (default: today)")
         g.add_argument("--append", action="store_true", help="add episodes to an existing run")
 
+    def table_options(t):
+        t.add_argument("--task", help="task column (default: 'task')")
+        t.add_argument("--task-value", help="the task for every row, for files without a task column")
+        t.add_argument("--success", default="success", help="success column (1/0, true/false, ...)")
+        for col in ("init", "seed", "length", "video", "failure"):
+            t.add_argument(f"--{col}", help=f"{col} column (default: a column named '{col}', if any)")
+        t.add_argument("--stage", action="append", metavar="NAME[=COLUMN]", help="a stage column, repeatable")
+        t.add_argument("--stage-values", choices=["bool", "step"], default="bool",
+                       help="stage columns hold reached yes/no (bool) or the first step it held (step)")
+        t.add_argument("--furthest", help="column naming the furthest stage reached")
+        t.add_argument("--order", help="comma-separated stage order for --furthest")
+        t.add_argument("--const", action="append", metavar="KEY=VALUE",
+                       help="add to every episode's extra (e.g. checkpoint=s0), repeatable")
+
     t = importer("table", "any CSV / TSV / JSONL with one row per episode", cmd_import_table)
     t.add_argument("files", nargs="+")
-    t.add_argument("--task", help="task column (default: 'task')")
-    t.add_argument("--task-value", help="the task for every row, for files without a task column")
-    t.add_argument("--success", default="success", help="success column (1/0, true/false, ...)")
-    for col in ("init", "seed", "length", "video", "failure"):
-        t.add_argument(f"--{col}", help=f"{col} column (default: a column named '{col}', if any)")
-    t.add_argument("--stage", action="append", metavar="NAME[=COLUMN]", help="a stage column, repeatable")
-    t.add_argument("--stage-values", choices=["bool", "step"], default="bool",
-                   help="stage columns hold reached yes/no (bool) or the first step it held (step)")
-    t.add_argument("--furthest", help="column naming the furthest stage reached")
-    t.add_argument("--order", help="comma-separated stage order for --furthest")
-    t.add_argument("--const", action="append", metavar="KEY=VALUE",
-                   help="add to every episode's extra (e.g. checkpoint=s0), repeatable")
+    table_options(t)
     run_options(t)
+
+    wb = importer("wandb", "per-episode tables logged to Weights & Biases", cmd_import_wandb)
+    wb.add_argument("runs", nargs="*", help="entity/project/run_id paths or local wandb/run-* directories")
+    wb.add_argument("--project", help="entity/project: every run of it (narrow with --filter)")
+    wb.add_argument("--filter", action="append", metavar="KEY=VALUE", help="only runs whose config matches")
+    wb.add_argument("--table", default="episodes", help="summary key of the per-episode table")
+    wb.add_argument("--task-from-config", help="comma-separated config keys whose values name the task")
+    wb.add_argument("--extra-from-config", help="comma-separated config keys to copy into each episode's extra")
+    table_options(wb)
+    run_options(wb)
 
     lr = importer("lerobot", "lerobot-eval eval_info.json, any LeRobot environment", cmd_import_lerobot)
     lr.add_argument("files", nargs="+")
@@ -310,6 +346,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="stage and failure-signature breakdown for changed tasks (default), all tasks or none")
     c.add_argument("--top", type=int, default=5, help="failure signatures to show per task")
     c.add_argument("--json", help="also write the comparison as JSON")
+    c.add_argument("--wandb", metavar="ENTITY/PROJECT", help="also log the comparison to a W&B run (needs wandb)")
+    c.add_argument("--wandb-mode", choices=["online", "offline"], help="W&B mode (default: W&B's own setting)")
+    c.add_argument("--video-base-a", help="directory run A's video paths are relative to (for W&B videos)")
+    c.add_argument("--video-base-b", help="directory run B's video paths are relative to")
     c.set_defaults(func=cmd_compare)
     return p
 

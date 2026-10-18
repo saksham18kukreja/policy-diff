@@ -3,6 +3,7 @@
   table    any CSV / TSV / JSONL with one row per episode (column mapping)
   lerobot  lerobot-eval eval_info.json, any LeRobot environment
   libero   LIBERO goal-condition logs, with lerobot-eval output and Conductor harness events
+  wandb    per-episode tables logged to Weights & Biases (adapters.wandb_tables; needs wandb)
 
 To log directly from an evaluation loop, use policy_diff.log.RunWriter.
 """

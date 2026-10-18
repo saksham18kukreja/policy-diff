@@ -11,9 +11,9 @@ learned robot policies, for any robot, simulator or benchmark. Give it per-episo
 results from two evaluations and it reports which tasks improved or regressed, whether
 each change is real or noise, and which runs shouldn't be compared at all.
 
-> **Status: early.** The log format, importers (any CSV/TSV/JSONL, LeRobot, LIBERO), a
-> logging API, `compare` and the failure breakdown (stages, failure signatures, failure
-> reasons) work today. Timing and the HTML report are next. Design: [design document](docs/policy-diff_design.docx),
+> **Status: early.** The log format, importers (any CSV/TSV/JSONL, W&B, LeRobot, LIBERO), a
+> logging API, `compare`, the failure breakdown and W&B import/export work today. The CI
+> gate is next. Design: [design document](docs/policy-diff_design.docx),
 > [one-pager](docs/policy-diff_one-pager.docx). Feedback and issues are welcome.
 
 ## Why
@@ -95,6 +95,21 @@ python -m policy_diff import table results.csv --task task_name --success ok --i
     --stage grasped --stage lifted --failure reason --const checkpoint=50k --out runs/ckpt_50k
 ```
 
+**From Weights & Biases**, if you already log one row per episode as a `wandb.Table`
+(by run path, or every run of a project whose config matches; config values can name
+the task and tag episodes):
+
+```bash
+pip install wandb
+python -m policy_diff import wandb --project my-team/evals --filter label=v5.1 \
+    --task-from-config mode,perception --extra-from-config checkpoint \
+    --init position --failure failure_reason --out runs/v5.1
+```
+
+It warns when runs with identical configs land in the same task. Our own cube
+benchmark logged 0-, 1- and 2-distractor evaluations with identical configs, so in W&B
+they were indistinguishable.
+
 **From LeRobot** (`lerobot-eval` output, any environment) or **LIBERO**:
 
 ```bash
@@ -108,6 +123,10 @@ Then compare runs, or subsets of them (any field or `extra` key):
 python -m policy_diff compare runs/ckpt_40k runs/ckpt_50k --json diff.json
 python -m policy_diff compare runs/fleet runs/fleet --where-a robot=arm-1 --where-b robot=arm-2
 ```
+
+**Send the verdicts to W&B** with `--wandb ENTITY/PROJECT`. This logs one run with the
+per-task verdicts, stage and signature shifts, failure reasons, and a table of the
+episodes that flipped, with both runs' failure signatures and videos side by side.
 
 ## Where the failures come from
 
@@ -148,28 +167,22 @@ most common failure signatures.
 ## What's next
 
 ```bash
-policy-diff compare runs/ckpt_40k runs/ckpt_50k --out report.html
-```
-
-One self-contained HTML report with everything above, plus:
-
-- **Timing shifts** per stage, which catch configuration problems (a timeout that no
-  longer fits a model) that look like model regressions.
-- **Side-by-side videos** of the episodes that flipped between checkpoints.
-- **Run settings diff**, so a changed `n_action_steps` isn't mistaken for a better model.
-
-```bash
 policy-diff check --baseline runs/main --candidate runs/pr-123 --fail-on likely-regression
 ```
 
-**CI mode**: exit non-zero when a new checkpoint regresses beyond noise.
+- **CI mode**: exit non-zero when a new checkpoint regresses beyond noise, with a
+  GitHub Action.
+- **Run settings diff**, so a changed `n_action_steps` isn't mistaken for a better model.
+- **Timing shifts** per stage: how long each stage takes and how that moved, which also
+  gives harnesses the numbers to calibrate timeouts per model.
 
 ## How it works
 
-- **Logs in, report out.** No access to the policy, robot or simulator is needed.
+- **Logs in, verdicts out.** No access to the policy, robot or simulator is needed;
+  results go to the terminal, JSON, or a W&B run.
 - **A simple open log format** with only task and success required, so it works the
   same for simulation benchmarks and for real-robot logs. Importers for any
-  CSV/TSV/JSONL, LeRobot and LIBERO, plus a Python logging API.
+  CSV/TSV/JSONL, Weights & Biases tables, LeRobot and LIBERO, plus a Python logging API.
 - **Failure clustering in two tiers**: deterministic rules on stage outcomes and
   events by default; optional VLM captioning and clustering of failure videos for
   real-robot logs without stage signals.
@@ -179,17 +192,26 @@ policy-diff check --baseline runs/main --candidate runs/pr-123 --fail-on likely-
 
 | Version | Scope |
 |---|---|
-| **v0.1** | ✅ Log format, logging API, table / LeRobot / LIBERO importers, confidence-labelled diffs, duplicate-run checks, stage breakdown, failure signatures and reasons · next: timing, HTML report |
-| v0.2 | `check` for CI, GitHub Action, settings diff, JSON summary |
+| **v0.1** | ✅ Log format, logging API, table / LeRobot / LIBERO / W&B importers, confidence-labelled diffs, integrity checks, stage breakdown, failure signatures and reasons, export to W&B |
+| v0.2 | `check` for CI, GitHub Action, settings diff, timing per stage |
 | v0.3 | VLM-based failure clustering for real-robot logs |
 | v0.4 | Regression suites: turn logged failures into named suites to re-run on every checkpoint |
 | Later | Real-world failures as reproducible simulation cases |
 
-The v0.1 launch demo is a real HTML report generated from the three example sets.
+A standalone HTML report is deliberately not planned: dashboards and video browsing are
+what W&B already does well, so policy-diff sends its results there instead.
 
 ## Related work
 
-policy-diff analyses evaluation results; it builds on tools that run and score them:
+**Weights & Biases** stores and visualises evaluation results: per-episode tables with
+videos, run comparisons and, in Weave, row-by-row comparisons of two evaluations.
+policy-diff does not replace that. It adds the analysis W&B leaves to you: whether a
+change is real or noise (paired, stratified exact tests with FDR correction), where it
+comes from (stages, failure signatures, reasons across tasks), and whether two runs can
+be compared at all (duplicate evaluations, unlogged conditions). It reads from W&B and
+writes its verdicts back.
+
+policy-diff analyses evaluation results; it also builds on tools that run and score them:
 [LeRobot](https://github.com/huggingface/lerobot),
 [XPolicyLab](https://arxiv.org/abs/2608.09892) (running any policy in any
 environment), Rollproof (statistical A/B verdicts from logs), the TRI/Cornell
