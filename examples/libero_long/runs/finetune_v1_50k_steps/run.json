@@ -1,0 +1,15 @@
+{
+ "format_version": "0.1",
+ "run_id": "finetune_v1_50k_steps",
+ "policy": "finetune_v1@50k",
+ "benchmark": "libero_10",
+ "settings": {
+  "wording": "conductor"
+ },
+ "sources": [
+  "./finetune_v1/eval_full50k/step0.jsonl",
+  "./finetune_v1/eval_full50k/step1.jsonl"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

@@ -2,6 +2,6 @@ __pycache__/
 *.pyc
 .venv/
 .env/
-runs/
+/runs/
 *.html
 !docs/**/*.html

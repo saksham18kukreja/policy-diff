@@ -1,0 +1,17 @@
+{
+ "format_version": "0.1",
+ "run_id": "finetune_v1_50k_conductor_t220_n10",
+ "policy": "finetune_v1@50k",
+ "benchmark": "libero_10",
+ "settings": {
+  "harness": "conductor-m3",
+  "step_timeout": 220,
+  "n_action_steps": 10
+ },
+ "sources": [
+  "./finetune_v1/m3_50k_t220_n10/subgoals_s1000.jsonl",
+  "./finetune_v1/m3_50k_t220_n10/harness_s1000.jsonl"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

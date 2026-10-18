@@ -1,0 +1,19 @@
+{
+ "format_version": "0.1",
+ "run_id": "libero90_smolvla_steps",
+ "policy": "Kesvill/smolvla_libero_90",
+ "benchmark": "libero_10",
+ "settings": {
+  "wording": "libero90"
+ },
+ "sources": [
+  "./kesvill_l90/m1/step0_libero90_s1000.jsonl",
+  "./kesvill_l90/m1/step0_libero90_s2000.jsonl",
+  "./kesvill_l90/m1/step0_libero90_s3000.jsonl",
+  "./kesvill_l90/m1/step1_libero90_s1000.jsonl",
+  "./kesvill_l90/m1/step1_libero90_s2000.jsonl",
+  "./kesvill_l90/m1/step1_libero90_s3000.jsonl"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

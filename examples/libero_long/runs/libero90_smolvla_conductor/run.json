@@ -1,0 +1,24 @@
+{
+ "format_version": "0.1",
+ "run_id": "libero90_smolvla_conductor",
+ "policy": "Kesvill/smolvla_libero_90",
+ "benchmark": "libero_10",
+ "settings": {
+  "harness": "conductor-m3",
+  "step_timeout": 160,
+  "n_action_steps": 50
+ },
+ "sources": [
+  "./kesvill_l90/m3/subgoals_s1000.jsonl",
+  "./kesvill_l90/m3/subgoals_s2000.jsonl",
+  "./kesvill_l90/m3/subgoals_s3000.jsonl",
+  "./kesvill_l90/m3/eval_s1000.json",
+  "./kesvill_l90/m3/eval_s2000.json",
+  "./kesvill_l90/m3/eval_s3000.json",
+  "./kesvill_l90/m3/harness_s1000.jsonl",
+  "./kesvill_l90/m3/harness_s2000.jsonl",
+  "./kesvill_l90/m3/harness_s3000.jsonl"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

@@ -1,0 +1,20 @@
+{
+ "format_version": "0.1",
+ "run_id": "libero90_smolvla",
+ "policy": "Kesvill/smolvla_libero_90",
+ "benchmark": "libero_10",
+ "settings": {
+  "n_action_steps": 50,
+  "max_steps": 520
+ },
+ "sources": [
+  "./kesvill_l90/subgoals_s1000.jsonl",
+  "./kesvill_l90/subgoals_s2000.jsonl",
+  "./kesvill_l90/subgoals_s3000.jsonl",
+  "./kesvill_l90/full_instruction_s1000.json",
+  "./kesvill_l90/full_instruction_s2000.json",
+  "./kesvill_l90/full_instruction_s3000.json"
+ ],
+ "notes": null,
+ "created": "2026-10-18"
+}

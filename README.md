@@ -3,7 +3,7 @@
 **Find out what your new robot policy broke, before your robot does.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-![Status: design](https://img.shields.io/badge/status-design%20stage-orange.svg)
+![Status: early](https://img.shields.io/badge/status-early%20(v0.0.1)-orange.svg)
 
 policy-diff is an open-source tool for failure analysis and regression testing of
 learned robot policies. Point it at rollout logs from simulation or deployment and it
@@ -11,8 +11,9 @@ breaks failures down by stage, clusters them into failure modes, compares checkp
 and reports which behaviours improved or regressed, with confidence levels and
 side-by-side videos.
 
-> **Status: design stage.** This repository holds the design; code is not written yet.
-> Read the [design document](docs/policy-diff_design.docx) and the
+> **Status: early.** The log format, the LIBERO adapter and `compare` (per-task diffs
+> with exact tests and confidence labels) work today; the stage breakdown, timing and the
+> HTML report are next. Design: [design document](docs/policy-diff_design.docx),
 > [one-pager](docs/policy-diff_one-pager.docx). Feedback and issues are welcome.
 
 ## Why
@@ -28,6 +29,38 @@ VLAs step by step on LIBERO-Long; each took hours to find by hand:
 | A 160-step retry timeout cut off 7 of 8 successes of a slower model | "the model is bad" |
 | 24% of an end-to-end VLA's episodes finished part of the task, then stalled | "54% success" |
 | A step went 5 → 2 → 5 out of 10 across checkpoints | looked like a regression; it was noise |
+
+## Try it
+
+No dependencies beyond Python 3.9+.
+
+```bash
+git clone https://github.com/saksham18kukreja/policy-diff && cd policy-diff
+python -m policy_diff compare examples/libero_long/runs/smolvla_libero examples/libero_long/runs/finetune_v1_50k
+```
+
+```
+task                   A                       B                        change  pairs  A✓B✗  B✓A✗      p      q  verdict
+libero_10/2             23/30   77% [ 59- 88]    1/10   10% [  2- 40]     -67%     10     6     0  0.003  0.007  likely real: regressed
+libero_10/4              7/30   23% [ 12- 41]    3/10   30% [ 11- 60]      +7%      8     1     2  1.000  1.000  noise
+```
+
+Rates come with 95% Wilson intervals. Each task gets an exact test stratified by initial
+state, which uses every episode and gets the precision of pairing when runs share initial
+states; *likely real* means it survives a false-discovery-rate correction across tasks.
+[`examples/libero_long`](examples/libero_long) has 14 real runs to compare.
+
+Import your own LIBERO logs (Conductor's goal-condition logger, plus `lerobot-eval`'s
+`eval_info.json` and harness logs if you have them):
+
+```bash
+python -m policy_diff import libero --subgoals subgoals_s1000.jsonl --eval eval_info.json --out runs/mine
+python -m policy_diff summary runs/mine
+```
+
+Or write the format directly: a directory with `run.json` and `episodes.jsonl`, one JSON
+object per episode, where only `task` and `success` are required
+(see [`policy_diff/schema.py`](policy_diff/schema.py)).
 
 ## What it will do
 
@@ -70,7 +103,7 @@ policy-diff check --baseline runs/main --candidate runs/pr-123 --fail-on likely-
 
 | Version | Scope |
 |---|---|
-| **v0.1** | Log format, LeRobot + LIBERO adapters, confidence-labelled diffs, stage breakdown, failure signatures, timing, HTML report |
+| **v0.1** | ✅ Log format, LIBERO adapter, confidence-labelled diffs · next: stage breakdown, failure signatures, timing, HTML report, LeRobot-only adapter |
 | v0.2 | `check` for CI, GitHub Action, settings diff, JSON summary |
 | v0.3 | VLM-based failure clustering for real-robot logs |
 | v0.4 | Regression suites: turn logged failures into named suites to re-run on every checkpoint |

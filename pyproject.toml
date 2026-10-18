@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "policy-diff"
+version = "0.0.1"
+description = "Failure analysis and regression testing for learned robot policies"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Saksham Kukreja" }]
+requires-python = ">=3.9"
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+policy-diff = "policy_diff.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["policy_diff*"]
