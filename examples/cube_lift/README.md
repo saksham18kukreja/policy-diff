@@ -36,7 +36,9 @@ What these show:
 - **v5.0 → v5.1 on `pick/color`: 497 → 570 of 600, likely real, and no position got
   worse** (0 pairs flipped to failure). v5.0's failures were 73 timeouts stuck at grasp
   or rise; v5.1's 30 remaining failures are all `target_not_detected`, the same 10
-  positions for every checkpoint: a perception limit, not the policy.
+  positions for every checkpoint: a perception limit, not the policy. The breakdown
+  shows it directly: `stopped after grasp [timeout]` 41 → 0, `stopped after rise
+  [timeout]` 30 → 0, `no stage reached [target_not_detected]` 30 → 30.
 - **One v5.1 training seed regresses after a place**: s2 drops or times out on 11 of 200
   `after_place` episodes, s1 on none (likely real); the other 7 conditions are identical.
   The pooled version comparison hides this; `--where` on `extra.checkpoint` finds it.

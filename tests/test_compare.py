@@ -99,3 +99,22 @@ def test_lerobot_hub_cases():
     assert not c.tasks and "identical per-episode results" in c.warnings[0]
     c, _ = one("diffusion_pusht_2024-05", "vqbet_pusht_2024-07")  # same seeds and score, different runs
     assert not c.warnings
+
+
+@pytest.mark.skipif(not EXAMPLES.exists(), reason="example runs not converted")
+def test_launch_demo_breakdowns():
+    from policy_diff.stages import breakdown, reason_shifts
+    a, b = load_run(EXAMPLES / "smolvla_libero"), load_run(EXAMPLES / "finetune_v1_50k")
+    bd = breakdown("libero_10/2", a.by_task()["libero_10/2"], b.by_task()["libero_10/2"])
+    by = {(s.kind, s.name): s for s in bd.shifts}
+    # the fine-tune still turns the stove on, but stopped putting the moka pot on it
+    assert by[("stage", "turnon flat_stove_1")].label == stats.NOISE
+    assert by[("stage", "on moka_pot_1 flat_stove_1_cook_region")].label == stats.LIKELY
+    sig = by[("signature", "stopped after turnon flat_stove_1 [out of steps]")]
+    assert (sig.a, sig.b, sig.label) == (7, 9, stats.LIKELY)
+    # the 160-step retry timeout: no task changes detectably, but timeouts at the limit halve with 220
+    t160 = load_run(EXAMPLES / "finetune_v1_50k_conductor_t160")
+    t220 = load_run(EXAMPLES / "finetune_v1_50k_conductor_t220")
+    assert all(d.label == stats.NOISE for d in compare(t160, t220).tasks)
+    limit = next(s for s in reason_shifts(t160.episodes, t220.episodes) if "no retry (limit)" in s.name)
+    assert (limit.a, limit.b, limit.label) == (53, 27, stats.LIKELY)

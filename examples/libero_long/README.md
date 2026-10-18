@@ -30,8 +30,12 @@ What these show, each of which took hours by hand:
 - it **learned steps the LIBERO-90 model can't do** (left moka pot 0/30 → 8/10, mug into
   the microwave 0/30 → 5/10, likely real);
 - the mug step's **5 → 2 → 5 swing** across checkpoints is noise;
-- the 160 → 220-step retry timeout change (20% → 28%) is not detectable from success
-  alone; that is what the timing analysis (next) is for.
+- the fine-tune's task-2 regression is one stage: it still turns the stove on (30/30 →
+  10/10) but stopped putting the moka pot on it (23/30 → 1/10);
+- the 160 → 220-step retry timeout change (20% → 28%) is not detectable from success in
+  any task, but across tasks the failures that timed out at the retry limit halve
+  (53 → 27 of 100, likely real):
+  `compare finetune_v1_50k_conductor_t160 finetune_v1_50k_conductor_t220`.
 
 Rebuild the runs from a conductor-vla checkout with
 `CONDUCTOR=path/to/conductor-vla ./convert.sh`.

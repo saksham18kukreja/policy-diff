@@ -14,7 +14,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from . import stats
+from . import stages, stats
 from .adapters.lerobot import import_lerobot
 from .adapters.libero import import_libero
 from .adapters.table import import_table
@@ -102,7 +102,54 @@ def cmd_summary(args) -> int:
     for task, eps in run.by_task().items():
         print(f"  {task:<{w}}  {_pct(sum(e.success for e in eps), len(eps))}")
     print(f"  {'all':<{w}}  {_pct(sum(e.success for e in run.episodes), len(run.episodes))}")
+    if args.failures:
+        for t in stages.analyze(run):
+            print()
+            print(format_analysis(t, top=args.top))
     return 0
+
+
+def _frac(k, n) -> str:
+    return f"{k}/{n}" if n else "-"
+
+
+def format_analysis(t: "stages.TaskAnalysis", top: int = 5) -> str:
+    """Stage outcomes and the most common failure signatures of one task."""
+    lines = [f"{t.task}: {t.successes}/{t.n} succeeded"]
+    if t.stages:
+        w = max(len(s.name) for s in t.stages)
+        lines.append(f"  {'stage':<{w}}  {'reached':>9} {'held':>9} {'lost':>6} {'median step':>11}")
+        for s in t.stages:
+            med = "-" if s.median_first is None else f"{s.median_first:.0f}"
+            lines.append(f"  {s.name:<{w}}  {_frac(s.reached, s.n):>9} "
+                         f"{'-' if s.final is None else _frac(s.final, s.n):>9} "
+                         f"{'-' if s.lost is None else s.lost:>6} {med:>11}")
+    failed = t.n - t.successes
+    if failed:
+        classes = ", ".join(f"{k} {c}" for c, k in t.classes.items())
+        lines.append(f"  {failed} failures ({classes}):")
+        for sig, k in t.signatures[:top]:
+            lines.append(f"    {k:>4}  {sig}")
+        if len(t.signatures) > top:
+            lines.append(f"    ... {len(t.signatures) - top} more signatures")
+    return "\n".join(lines)
+
+
+def format_breakdown(bd: "stages.TaskBreakdown", d, top: int = 5) -> str:
+    """Within one changed task: which stages and failure signatures moved."""
+    verdict = "noise" if d.direction == "unchanged" else f"{d.label}: {d.direction}"
+    lines = [f"{bd.task}: {d.a_success}/{d.a_n} -> {d.b_success}/{d.b_n} ({verdict})"]
+    st = [s for s in bd.shifts if s.kind == "stage"]
+    sg = sorted((s for s in bd.shifts if s.kind == "signature"), key=lambda s: s.p)[:top]
+    w = max([len(r.name) for r in st + sg] + [len("failure signature")])
+    for title, rows in (("stage reached", st), ("failure signature", sg)):
+        if not rows:
+            continue
+        lines.append(f"  {title:<{w}}  {'A':>9} {'B':>9}  {'p':>6}  verdict")
+        for r in rows:
+            v = "noise" if r.label == stats.NOISE else f"{r.label}: {'more' if r.b * r.a_n > r.a * r.b_n else 'less'} often"
+            lines.append(f"  {r.name:<{w}}  {_frac(r.a, r.a_n):>9} {_frac(r.b, r.b_n):>9}  {r.p:6.3f}  {v}")
+    return "\n".join(lines)
 
 
 def format_comparison(c: Comparison) -> str:
@@ -157,9 +204,33 @@ def cmd_compare(args) -> int:
             raise ValueError(f"{r.run_id}: no episodes (check --where)")
     c = compare(a, b)
     print(format_comparison(c))
+    out = c.to_dict()
+    common = [d.task for d in c.tasks]
+    ea = [e for e in a.episodes if e.task in common]
+    eb = [e for e in b.episodes if e.task in common]
+    reasons = stages.reason_shifts(ea, eb) if args.details != "none" else []
+    if reasons:
+        w = max(len(r.name) for r in reasons[:args.top])
+        print(f"\nFailure reasons across the {len(common)} compared tasks:")
+        print(f"  {'reason':<{w}}  {'A':>9} {'B':>9}  {'p':>6} {'q':>6}  verdict")
+        for r in reasons[:args.top]:
+            v = "noise" if r.label == stats.NOISE else f"{r.label}: {'more' if r.b * r.a_n > r.a * r.b_n else 'less'} often"
+            print(f"  {r.name:<{w}}  {_frac(r.a, r.a_n):>9} {_frac(r.b, r.b_n):>9}  {r.p:6.3f} {r.q:6.3f}  {v}")
+        out["reasons"] = [r.to_dict() for r in reasons]
+    if args.details != "none":
+        ta, tb = a.by_task(), b.by_task()
+        chosen = [d for d in c.tasks if args.details == "all" or d.direction != "unchanged"]
+        if chosen:
+            print("\nWhere the changes come from (stage reach and failure signatures, same tests, FDR within each task):")
+        out["breakdowns"] = []
+        for d in chosen:
+            bd = stages.breakdown(d.task, ta[d.task], tb[d.task])
+            print()
+            print(format_breakdown(bd, d, top=args.top))
+            out["breakdowns"].append(bd.to_dict())
     if args.json:
         with open(args.json, "w") as f:
-            json.dump(c.to_dict(), f, indent=1)
+            json.dump(out, f, indent=1)
     return 0
 
 
@@ -224,6 +295,8 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("summary", help="per-task success of one run")
     s.add_argument("run")
     s.add_argument("--where", action="append", metavar="KEY=VALUE", help="only matching episodes (field or extra)")
+    s.add_argument("--failures", action="store_true", help="per task: stage outcomes and failure signatures")
+    s.add_argument("--top", type=int, default=5, help="failure signatures to show per task")
     s.set_defaults(func=cmd_summary)
 
     c = sub.add_parser("compare", help="what changed from run A to run B")
@@ -233,6 +306,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="compare only matching episodes (a field such as task, or an extra key), repeatable")
     c.add_argument("--where-a", action="append", metavar="KEY=VALUE", help="filter run A only")
     c.add_argument("--where-b", action="append", metavar="KEY=VALUE", help="filter run B only")
+    c.add_argument("--details", choices=["changed", "all", "none"], default="changed",
+                   help="stage and failure-signature breakdown for changed tasks (default), all tasks or none")
+    c.add_argument("--top", type=int, default=5, help="failure signatures to show per task")
     c.add_argument("--json", help="also write the comparison as JSON")
     c.set_defaults(func=cmd_compare)
     return p

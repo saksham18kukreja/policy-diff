@@ -12,8 +12,8 @@ results from two evaluations and it reports which tasks improved or regressed, w
 each change is real or noise, and which runs shouldn't be compared at all.
 
 > **Status: early.** The log format, importers (any CSV/TSV/JSONL, LeRobot, LIBERO), a
-> logging API and `compare` work today. The stage breakdown, timing and HTML report
-> are next. Design: [design document](docs/policy-diff_design.docx),
+> logging API, `compare` and the failure breakdown (stages, failure signatures, failure
+> reasons) work today. Timing and the HTML report are next. Design: [design document](docs/policy-diff_design.docx),
 > [one-pager](docs/policy-diff_one-pager.docx). Feedback and issues are welcome.
 
 ## Why
@@ -109,20 +109,50 @@ python -m policy_diff compare runs/ckpt_40k runs/ckpt_50k --json diff.json
 python -m policy_diff compare runs/fleet runs/fleet --where-a robot=arm-1 --where-b robot=arm-2
 ```
 
-## What it will do
+## Where the failures come from
+
+For every task that changed, `compare` shows which stages and which failure modes
+moved, tested the same way as success:
+
+```
+libero_10/2: 23/30 -> 1/10 (likely real: regressed)
+  stage reached                                       A         B       p  verdict
+  turnon flat_stove_1                             30/30     10/10   1.000  noise
+  on moka_pot_1 flat_stove_1_cook_region          23/30      1/10   0.003  likely real: less often
+  failure signature                                   A         B       p  verdict
+  stopped after turnon flat_stove_1 [out of steps] 7/30      9/10   0.003  likely real: more often
+```
+
+Each failed episode gets a **failure class** (*none*: no stage reached; *partial*;
+*undone*: a stage was reached, then lost; *no stage data*) and a **failure signature**
+built from what was logged: stage outcomes ("stopped after grasp", "missing on
+moka_pot_1"), plus the logged failure reason, the last harness event if it reads like a
+failure, or "out of steps". Episodes with the same signature are the same failure mode;
+this is Tier-1 failure clustering: deterministic and explainable.
+
+`compare` also tests **failure reasons across all tasks**, which catches problems
+that are too small to show in any single task. Raising Conductor's retry timeout from
+160 to 220 steps changed no task detectably, but:
+
+```
+Failure reasons across the 10 compared tasks:
+  reason                                  A         B       p      q  verdict
+  step # timed out, no retry (limit)  53/100    27/100   0.000  0.000  likely real: less often
+  step # timed out, no retry (budget)  5/100    22/100   0.000  0.001  likely real: more often
+```
+
+`summary RUN --failures` prints the same breakdown for one run: per stage, how often it
+was reached, held at the end and lost, and the median step it was reached at; then the
+most common failure signatures.
+
+## What's next
 
 ```bash
 policy-diff compare runs/ckpt_40k runs/ckpt_50k --out report.html
 ```
 
-One self-contained HTML report:
+One self-contained HTML report with everything above, plus:
 
-- **What improved and what regressed**, per task, with intervals and a label:
-  *likely real*, *possible* or *noise*. Episodes with the same task and initial state
-  are paired across runs, which makes small differences detectable.
-- **Where failures happen**: each failed episode classified as *nothing done*,
-  *partial*, *undone* or *timed out*, per stage, and grouped into failure signatures
-  such as "step 1 done, step 2 never started".
 - **Timing shifts** per stage, which catch configuration problems (a timeout that no
   longer fits a model) that look like model regressions.
 - **Side-by-side videos** of the episodes that flipped between checkpoints.
@@ -149,7 +179,7 @@ policy-diff check --baseline runs/main --candidate runs/pr-123 --fail-on likely-
 
 | Version | Scope |
 |---|---|
-| **v0.1** | ✅ Log format, logging API, table / LeRobot / LIBERO importers, confidence-labelled diffs, duplicate-run checks · next: stage breakdown, failure signatures, timing, HTML report |
+| **v0.1** | ✅ Log format, logging API, table / LeRobot / LIBERO importers, confidence-labelled diffs, duplicate-run checks, stage breakdown, failure signatures and reasons · next: timing, HTML report |
 | v0.2 | `check` for CI, GitHub Action, settings diff, JSON summary |
 | v0.3 | VLM-based failure clustering for real-robot logs |
 | v0.4 | Regression suites: turn logged failures into named suites to re-run on every checkpoint |
